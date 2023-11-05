@@ -60,8 +60,11 @@ class Parser:
             raise SSyntaxError(
                 f"unknown token '{self.token.tp}' at line {self.token.ln}, column {self.token.col}.")
 
-        while self.token in ():
-            ...
+        while self.token in (TokenType.LSQBR,):
+            if self.token == TokenType.LSQBR:
+                self.eat()
+                res = ast.IndexOp(res, self.parse_expr())
+                self.eat(TokenType.RSQBR)
 
         for i in reversed(prefix):
             res = ast.Unary(i, res)
@@ -104,6 +107,11 @@ class Parser:
             return ast.VarDecl(variables)
         else:
             left = self.parse_expr()
+            if self.token.tp == TokenType.ASSIGN:
+                self.eat()
+                right = self.parse_expr()
+                self.eat(TokenType.SEMICOLON)
+                return ast.Assign(left, right)
             self.eat(TokenType.SEMICOLON)
             return ast.ExprStmt(left)
 

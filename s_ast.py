@@ -82,7 +82,7 @@ class Block(Stmt):
             if ret is not None:
                 if ret_type is not None and ret_type != ret:
                     raise STypeError(
-                        f"conflict return type '{ret}' and '{ret_type}'.")
+                        f"conflicting return type '{ret}' and '{ret_type}'.")
                 ret_type = ret
         return ret_type
 
@@ -120,13 +120,13 @@ class IfStmt(Stmt):
             if ret is not None:
                 if ret_type is not None and ret_type != ret_type:
                     raise STypeError(
-                        f"conflict return type '{ret}' and '{ret_type}'.")
+                        f"conflicting return type '{ret}' and '{ret_type}'.")
                 ret_type = ret
         ret = self.else_block.check(Scope(scope))
         if ret is not None:
             if ret_type is not None and ret_type != ret_type:
                 raise STypeError(
-                    f"conflict return type '{ret}' and '{ret_type}'.")
+                    f"conflicting return type '{ret}' and '{ret_type}'.")
         return ret_type
     
     def run(self, scope: Scope) -> RunSignal | None:
@@ -175,10 +175,21 @@ class Assign(Stmt):
         self.left, self.right = left, right
 
     def check(self, scope: Scope) -> Type | None:
-        ...
+        if not isinstance(self.left, Variable) and not isinstance(self.left, IndexOp):
+            raise STypeError("left of the assignment is not a l-value.")
+        left = self.left.check(scope)
+        right = self.right.check(scope)
+        if left != right:
+            raise STypeError(f"conflicting left type '{left}' and right type '{right}' when assigning.")
 
     def run(self, scope: Scope) -> RunSignal | None:
-        ...
+        right = self.right.eval(scope)
+        if isinstance(self.left, Variable):
+            scope.set(self.left.name, right)
+        elif isinstance(self.left, IndexOp):
+            left_base = self.left.base.eval(scope)
+            left_index = self.left.index.eval(scope)
+            left_base[left_index] = right
 
 
 class Const(Expr):
@@ -283,3 +294,22 @@ class Unary(Expr):
             TokenType.NOT: lambda x: not x,
             TokenType.INV: lambda x: ~x,
         }[self.op](self.val.eval(scope))
+    
+
+class IndexOp(Expr):
+    def __init__(self, base: Expr, index: Expr):
+        self.base, self.index = base, index
+
+    def check(self, scope: Scope) -> Type:
+        base, index = self.base.check(scope), self.index.check(scope)
+        if index != IntType:
+            raise STypeError(f"can't use type '{index}' as index.")
+        if isinstance(index, TemplateType) and index.tname == "list":
+            return index.targs[0]
+        elif index == StrType:
+            return StrType
+        else:
+            raise STypeError(f"type '{base}' is not subscriptable.")
+
+    def eval(self, scope: Scope) -> Any:
+        return self.base.eval(scope)[self.index.eval(scope)]
