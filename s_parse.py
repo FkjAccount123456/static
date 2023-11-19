@@ -60,11 +60,21 @@ class Parser:
             raise SSyntaxError(
                 f"unknown token '{self.token.tp}' at line {self.token.ln}, column {self.token.col}.")
 
-        while self.token in (TokenType.LSQBR,):
-            if self.token == TokenType.LSQBR:
+        while self.token.tp in (TokenType.LSQBR, TokenType.LPAREN):
+            if self.token.tp == TokenType.LSQBR:
                 self.eat()
                 res = ast.IndexOp(res, self.parse_expr())
                 self.eat(TokenType.RSQBR)
+            elif self.token.tp == TokenType.LPAREN:
+                self.eat()
+                args: list[ast.Expr] = []
+                if self.token.tp != TokenType.RPAREN:
+                    args.append(self.parse_expr())
+                    while self.token.tp == TokenType.COMMA:
+                        self.eat()
+                        args.append(self.parse_expr())
+                self.eat(TokenType.RPAREN)
+                res = ast.Call(res, args)
 
         for i in reversed(prefix):
             res = ast.Unary(i, res)
@@ -105,6 +115,38 @@ class Parser:
                 variables.append(self.parse_var_decl())
             self.eat(TokenType.SEMICOLON)
             return ast.VarDecl(variables)
+        elif self.token.tp == TokenType.FN:
+            self.eat()
+            name = self.eat(TokenType.ID).val
+            self.eat(TokenType.LPAREN)
+            params: list[str] = []
+            param_types: list[Type] = []
+            if self.token.tp != TokenType.RPAREN:
+                params.append(self.eat(TokenType.ID).val)
+                self.eat(TokenType.COLON)
+                param_types.append(self.parse_type())
+                while self.token.tp == TokenType.COMMA:
+                    self.eat()
+                    params.append(self.eat(TokenType.ID).val)
+                    self.eat(TokenType.COLON)
+                    param_types.append(self.parse_type())
+            self.eat(TokenType.RPAREN)
+            self.eat(TokenType.POINTER)
+            ret_type = self.parse_type()
+            return ast.FnDef(name, params, param_types, ret_type, self.parse_block())
+        elif self.token.tp == TokenType.RETURN:
+            self.eat()
+            ret = self.parse_expr()
+            self.eat(TokenType.SEMICOLON)
+            return ast.ReturnStmt(ret)
+        elif self.token.tp == TokenType.BREAK:
+            self.eat()
+            self.eat(TokenType.SEMICOLON)
+            return ast.BreakStmt()
+        elif self.token.tp == TokenType.CONTINUE:
+            self.eat()
+            self.eat(TokenType.SEMICOLON)
+            return ast.ContinueStmt()
         else:
             left = self.parse_expr()
             if self.token.tp == TokenType.ASSIGN:
@@ -137,3 +179,9 @@ class Parser:
             self.eat(TokenType.RSQBR)
 
         return res
+
+    def parse_program(self) -> ast.Block:
+        stmts: list[ast.Stmt] = []
+        while self.token.tp != TokenType.EOF:
+            stmts.append(self.parse_stmt())
+        return ast.Block(stmts)

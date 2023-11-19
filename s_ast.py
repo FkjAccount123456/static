@@ -3,7 +3,7 @@ from s_type import *
 from enum import Enum, unique
 from s_error import SNameError, STypeError
 from s_data import TokenType
-from s_type import Type
+from s_type import Any, Scope, Type
 
 
 @unique
@@ -22,7 +22,6 @@ class Scope:
     def __init__(self, parent: "Scope | None" = None):
         self.parent = parent
         self.variables: dict[str, Any] = {}
-        self.functions: dict[str, Any] = {}
 
     def find(self, name: str):
         if name in self.variables:
@@ -30,13 +29,6 @@ class Scope:
         if self.parent:
             return self.parent.find(name)
         raise SNameError(f"undefined variable '{name}'.")
-
-    def find_func(self, name: str):
-        if name in self.functions:
-            return self.functions[name]
-        if self.parent:
-            return self.parent.find_func(name)
-        raise SNameError(f"undefined function '{name}'.")
 
     def set(self, name: str, val):
         if name in self.variables:
@@ -128,13 +120,13 @@ class IfStmt(Stmt):
                 raise STypeError(
                     f"conflicting return type '{ret}' and '{ret_type}'.")
         return ret_type
-    
+
     def run(self, scope: Scope) -> RunSignal | None:
         for cond, body in self.cases:
             if cond.eval(scope):
                 return body.run(Scope(scope))
         return self.else_block.run(Scope(scope))
-    
+
 
 class WhileStmt(Stmt):
     def __init__(self, cond: Expr, body: Block):
@@ -143,7 +135,7 @@ class WhileStmt(Stmt):
     def check(self, scope: Scope) -> Type | None:
         self.cond.check(scope)
         return self.body.check(Scope(scope))
-    
+
     def run(self, scope: Scope) -> RunSignal | None:
         while self.cond.eval(scope):
             ret = self.body.run(Scope(scope))
@@ -152,7 +144,28 @@ class WhileStmt(Stmt):
                     break
                 if ret.signal == SignalType.RETURN:
                     return ret
-                
+
+
+class ReturnStmt(Stmt):
+    def __init__(self, ret: Expr):
+        self.ret = ret
+
+    def check(self, scope: Scope) -> Type | None:
+        return self.ret.check(scope)
+
+    def run(self, scope: Scope) -> RunSignal | None:
+        return RunSignal(SignalType.RETURN, self.ret.eval(scope))
+
+
+class BreakStmt(Stmt):
+    def run(self, scope: Scope) -> RunSignal | None:
+        return RunSignal(SignalType.BREAK)
+
+
+class ContinueStmt(Stmt):
+    def run(self, scope: Scope) -> RunSignal | None:
+        return RunSignal(SignalType.CONTINUE)
+
 
 class VarDecl(Stmt):
     def __init__(self, variables: list[tuple[str, Type, Expr | None]]):
@@ -176,11 +189,12 @@ class Assign(Stmt):
 
     def check(self, scope: Scope) -> Type | None:
         if not isinstance(self.left, Variable) and not isinstance(self.left, IndexOp):
-            raise STypeError("left of the assignment is not a l-value.")
+            raise STypeError("left of the assignment is not an l-value.")
         left = self.left.check(scope)
         right = self.right.check(scope)
         if left != right:
-            raise STypeError(f"conflicting left type '{left}' and right type '{right}' when assigning.")
+            raise STypeError(f"conflicting left type '{
+                             left}' and right type '{right}' when assigning.")
 
     def run(self, scope: Scope) -> RunSignal | None:
         right = self.right.eval(scope)
@@ -190,6 +204,26 @@ class Assign(Stmt):
             left_base = self.left.base.eval(scope)
             left_index = self.left.index.eval(scope)
             left_base[left_index] = right
+
+
+class FnDef(Stmt):
+    def __init__(self, name: str, params: list[str], param_types: list[Type], ret_type: Type, body: Block):
+        self.name, self.params, self.param_types = name, params, param_types
+        self.ret_type = ret_type
+        self.body = body
+
+    def check(self, scope: Scope) -> Type | None:
+        new_scope = Scope(scope)
+        new_scope.variables = dict(zip(self.params, self.param_types))
+        ret_type = self.body.check(new_scope)
+        if ret_type != self.ret_type:
+            raise STypeError("conflicting return types '{}' and '{}'.".format(
+                self.ret_type, ret_type))
+        scope.define(self.name, FunctionType(self.ret_type, self.param_types))
+
+    def run(self, scope: Scope) -> RunSignal | None:
+        scope.define(self.name, Function(
+            self.params, self.param_types, self.ret_type, self.body, scope))
 
 
 class Const(Expr):
@@ -294,7 +328,7 @@ class Unary(Expr):
             TokenType.NOT: lambda x: not x,
             TokenType.INV: lambda x: ~x,
         }[self.op](self.val.eval(scope))
-    
+
 
 class IndexOp(Expr):
     def __init__(self, base: Expr, index: Expr):
@@ -313,3 +347,23 @@ class IndexOp(Expr):
 
     def eval(self, scope: Scope) -> Any:
         return self.base.eval(scope)[self.index.eval(scope)]
+
+
+class Call(Expr):
+    def __init__(self, func: Expr, args: list[Expr]):
+        self.func, self.args = func, args
+
+    def check(self, scope: Scope) -> Type:
+        func = self.func.check(scope)
+        if not isinstance(func, TemplateType) or func.tname != "function":
+            raise STypeError("type '{}' is not callable.".format(func))
+        ret_type, param_types = func.targs
+        arg_types = list(map(lambda a: a.check(scope), self.args))
+        if param_types != arg_types:
+            raise STypeError("conflicting parameter types and argument types.")
+        return ret_type
+
+    def eval(self, scope: Scope) -> Any:
+        func = self.func.eval(scope)
+        args = list(map(lambda a: a.eval(scope), self.args))
+        return func(*args)

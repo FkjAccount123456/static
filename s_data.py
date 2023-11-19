@@ -35,6 +35,7 @@ class TokenType(Enum):
     COLON = 27
     SEMICOLON = 28
     ASSIGN = 29
+    POINTER = 30
     # Val
     ID = 100
     CONST = 101
@@ -50,6 +51,7 @@ class TokenType(Enum):
 
 
 operators = [
+    ('->', TokenType.POINTER),
     ('+', TokenType.ADD),
     ('-', TokenType.SUB),
     ('*', TokenType.MUL),
